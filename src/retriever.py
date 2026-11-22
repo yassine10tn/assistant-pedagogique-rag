@@ -8,9 +8,12 @@ import numpy as np
 
 from src.embeddings import embed_chunks, embed_query
 
+RAW_DIR = Path("data/raw")
 INDEX_DIR = Path("data/processed")
 INDEX_FILE = INDEX_DIR / "index.faiss"
 CHUNKS_FILE = INDEX_DIR / "chunks.json"
+
+MIN_SCORE = 0.78
 
 
 def build_index(chunks: list[dict]) -> None:
@@ -21,14 +24,14 @@ def build_index(chunks: list[dict]) -> None:
     index = faiss.IndexFlatIP(vectors.shape[1])
     index.add(vectors)
 
-    faiss.write_index(index, str(INDEX_FILE))
+    INDEX_FILE.write_bytes(faiss.serialize_index(index).tobytes())
     with open(CHUNKS_FILE, "w", encoding="utf-8") as f:
         json.dump(chunks, f, ensure_ascii=False, indent=2)
 
 
 def load_index():
     """Charge l'index FAISS et la liste des chunks depuis le disque."""
-    index = faiss.read_index(str(INDEX_FILE))
+    index = faiss.deserialize_index(np.frombuffer(INDEX_FILE.read_bytes(), dtype="uint8"))
     with open(CHUNKS_FILE, "r", encoding="utf-8") as f:
         chunks = json.load(f)
     return index, chunks
@@ -47,13 +50,12 @@ def search(question: str, k: int = 3) -> list[dict]:
         results.append(chunk)
     return results
 
-MIN_SCORE = 0.78  # valeur provisoire, on va la régler avec des tests
-
 
 def retrieve(question: str, k: int = 4, min_score: float = MIN_SCORE) -> list[dict]:
     """Retourne les chunks pertinents. Liste vide si rien n'est assez proche."""
     results = search(question, k=k)
     return [r for r in results if r["score"] >= min_score]
+
 
 def format_context(chunks: list[dict]) -> str:
     """Construit le texte de contexte envoyé au LLM, avec les sources."""
@@ -62,13 +64,14 @@ def format_context(chunks: list[dict]) -> str:
         parts.append(f"[Source {n} : {c['source']}, page {c['page']}]\n{c['text']}")
     return "\n\n".join(parts)
 
+
 def rebuild_index() -> int:
-    """Reconstruit l'index à partir de tous les PDF de data/raw. Retourne le nombre de chunks."""
+    """Reconstruit l'index à partir de tous les PDF de data/raw."""
     from src.ingestion import load_pdf, chunk_pages
 
     all_chunks = []
-    for pdf in sorted(Path("data/raw").glob("*.pdf")):
-        pages = [p for p in load_pdf(str(pdf)) if p["page"] > 1]  # on saute le sommaire
+    for pdf in sorted(RAW_DIR.glob("*.pdf")):
+        pages = [p for p in load_pdf(str(pdf)) if p["page"] > 1]
         all_chunks.extend(chunk_pages(pages, source=pdf.name))
 
     if not all_chunks:
@@ -77,34 +80,11 @@ def rebuild_index() -> int:
     build_index(all_chunks)
     return len(all_chunks)
 
+
 if __name__ == "__main__":
-    from src.ingestion import load_pdf, chunk_pages
+    n = rebuild_index()
+    print(f"Index créé avec {n} chunks\n")
 
-    # 1. Construire l'index (sans la page 1)
-    all_chunks = []
-    for pdf in Path("data/raw").glob("*.pdf"):
-        pages = [p for p in load_pdf(str(pdf)) if p["page"] > 1]
-        all_chunks.extend(chunk_pages(pages, source=pdf.name))
-    build_index(all_chunks)
-    print(f"Index créé avec {len(all_chunks)} chunks\n")
-
-    # 2. Tester des questions dans et hors du cours
-    questions = [
-        # داخل الكورس
-        "Comment Word2Vec calcule les scores ?",
-        "C'est quoi le skip-gram ?",
-        "Quelles sont les limites de Word2Vec ?",
-        "Qu'est-ce que le Masked Language Modeling ?",
-        "Quelle est la différence entre BoW et TF-IDF ?",
-        # خارج الكورس
-        "Comment faire un couscous ?",
-        "Qui a gagné la Coupe du monde 2018 ?",
-        "Quelle est la capitale du Japon ?",
-        "Comment installer Windows 11 ?",
-        "Quel est le meilleur club de football en Tunisie ?",
-    ]
-    for q in questions:
-        results = search(q, k=3)
-        best = results[0]
-        print(f"Q : {q}")
-        print(f"   meilleur score : {best['score']:.3f} | {best['source']} | page {best['page']}")
+    for q in ["Comment Word2Vec calcule les scores ?", "Comment faire un couscous ?"]:
+        best = search(q, k=3)[0]
+        print(f"Q : {q}\n   score : {best['score']:.3f} | {best['source']} | page {best['page']}")

@@ -17,7 +17,6 @@ RAW_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="Assistant pédagogique RAG")
 
-# CORS : autorise le front Next.js à appeler l'API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
@@ -25,8 +24,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# ---------- Modèles de requête ----------
 
 class ChatRequest(BaseModel):
     question: str
@@ -43,8 +40,6 @@ class QuizRequest(BaseModel):
     difficulty: Literal["facile", "moyen", "difficile"] = "moyen"
 
 
-# ---------- Endpoints ----------
-
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -52,13 +47,11 @@ def health():
 
 @app.get("/documents")
 def documents():
-    """Liste les PDF disponibles."""
     return {"documents": sorted(p.name for p in RAW_DIR.glob("*.pdf"))}
 
 
 @app.post("/upload")
 def upload(file: UploadFile = File(...)):
-    """Reçoit un PDF, le sauvegarde et reconstruit l'index."""
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Seuls les fichiers PDF sont acceptés.")
 

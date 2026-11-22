@@ -2,5 +2,7 @@ venv/
 .env
 __pycache__/
 *.pyc
-data/processed/
 .vscode/
+data/processed/
+frontend/node_modules/
+frontend/.next/
