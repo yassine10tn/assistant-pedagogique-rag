@@ -47,7 +47,7 @@ def search(question: str, k: int = 3) -> list[dict]:
         results.append(chunk)
     return results
 
-MIN_SCORE = 0.80   # valeur provisoire, on va la régler avec des tests
+MIN_SCORE = 0.78  # valeur provisoire, on va la régler avec des tests
 
 
 def retrieve(question: str, k: int = 4, min_score: float = MIN_SCORE) -> list[dict]:
@@ -61,6 +61,21 @@ def format_context(chunks: list[dict]) -> str:
     for n, c in enumerate(chunks, start=1):
         parts.append(f"[Source {n} : {c['source']}, page {c['page']}]\n{c['text']}")
     return "\n\n".join(parts)
+
+def rebuild_index() -> int:
+    """Reconstruit l'index à partir de tous les PDF de data/raw. Retourne le nombre de chunks."""
+    from src.ingestion import load_pdf, chunk_pages
+
+    all_chunks = []
+    for pdf in sorted(Path("data/raw").glob("*.pdf")):
+        pages = [p for p in load_pdf(str(pdf)) if p["page"] > 1]  # on saute le sommaire
+        all_chunks.extend(chunk_pages(pages, source=pdf.name))
+
+    if not all_chunks:
+        raise ValueError("Aucun PDF trouvé dans data/raw")
+
+    build_index(all_chunks)
+    return len(all_chunks)
 
 if __name__ == "__main__":
     from src.ingestion import load_pdf, chunk_pages

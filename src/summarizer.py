@@ -1,5 +1,5 @@
 """Résumés de documents longs (map-reduce)."""
-
+from pathlib import Path
 from src.llm import generate
 
 LEVELS = {
@@ -41,6 +41,18 @@ def summarize(text: str, level: str = "moyen") -> str:
     # REDUCE : résumer les résumés
     combined = "\n\n".join(partial)
     return generate(f"{instruction}\n\nVoici des résumés de parties du cours :\n{combined}", system=SYSTEM)
+
+def summarize_pdf(filename: str, level: str = "moyen") -> str:
+    """Résume un PDF de data/raw par son nom de fichier."""
+    from src.ingestion import load_pdf
+
+    path = Path("data/raw") / Path(filename).name   # .name évite les chemins dangereux
+    if not path.exists():
+        raise FileNotFoundError(filename)
+
+    pages = [p for p in load_pdf(str(path)) if p["page"] > 1]
+    text = "\n\n".join(p["text"] for p in pages)
+    return summarize(text, level)
 
 
 if __name__ == "__main__":
