@@ -1,4 +1,5 @@
 """Ingestion : extraction du texte des PDF et nettoyage."""
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 import re
 from pathlib import Path
@@ -37,6 +38,8 @@ def clean_text(text: str) -> str:
     # Corriger les accents mal encodés (´e -> é, `e -> è)
     for bad, good in {"´e": "é", "´E": "É", "`e": "è", "`a": "à", "ˆe": "ê", "´a": "á"}.items():
         text = text.replace(bad, good)
+        # Supprimer les symboles spéciaux (parenthèses de matrices LaTeX)
+    text = re.sub(r"[\uf000-\uf8ff]", "", text)
     return text.strip()
 
 
@@ -49,12 +52,30 @@ def load_pdf(pdf_path: str) -> list[dict]:
     pages = [p for p in pages if p["text"]]
     return pages
 
+def chunk_pages(pages: list[dict], source: str, chunk_size: int = 800, chunk_overlap: int = 150) -> list[dict]:
+    """Découpe chaque page en chunks et garde source + numéro de page."""
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=["\n\n", "\n", ". ", " ", ""],
+    )
+    chunks = []
+    for p in pages:
+        for piece in splitter.split_text(p["text"]):
+            chunks.append({
+                "text": piece,
+                "source": source,
+                "page": p["page"],
+            })
+    return chunks
+
 
 if __name__ == "__main__":
-    # Test rapide : traite tous les PDF du dossier data/raw
+    all_chunks = []
     for pdf in Path("data/raw").glob("*.pdf"):
         pages = load_pdf(str(pdf))
-        total_chars = sum(len(p["text"]) for p in pages)
-        print(f"{pdf.name} : {len(pages)} pages, {total_chars} caractères")
-        print("--- Extrait de la page 1 ---")
-        print(pages[0]["text"][:500])
+        all_chunks.extend(chunk_pages(pages, source=pdf.name))
+
+    print(f"Nombre total de chunks : {len(all_chunks)}")
+    print("--- Exemple de chunk ---")
+    print(all_chunks[5])
