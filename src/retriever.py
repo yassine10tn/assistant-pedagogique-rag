@@ -47,19 +47,49 @@ def search(question: str, k: int = 3) -> list[dict]:
         results.append(chunk)
     return results
 
+MIN_SCORE = 0.80   # valeur provisoire, on va la régler avec des tests
+
+
+def retrieve(question: str, k: int = 4, min_score: float = MIN_SCORE) -> list[dict]:
+    """Retourne les chunks pertinents. Liste vide si rien n'est assez proche."""
+    results = search(question, k=k)
+    return [r for r in results if r["score"] >= min_score]
+
+def format_context(chunks: list[dict]) -> str:
+    """Construit le texte de contexte envoyé au LLM, avec les sources."""
+    parts = []
+    for n, c in enumerate(chunks, start=1):
+        parts.append(f"[Source {n} : {c['source']}, page {c['page']}]\n{c['text']}")
+    return "\n\n".join(parts)
 
 if __name__ == "__main__":
     from src.ingestion import load_pdf, chunk_pages
 
-    # 1. Construire l'index (une seule fois)
+    # 1. Construire l'index (sans la page 1)
     all_chunks = []
     for pdf in Path("data/raw").glob("*.pdf"):
-        all_chunks.extend(chunk_pages(load_pdf(str(pdf)), source=pdf.name))
+        pages = [p for p in load_pdf(str(pdf)) if p["page"] > 1]
+        all_chunks.extend(chunk_pages(pages, source=pdf.name))
     build_index(all_chunks)
-    print(f"Index créé avec {len(all_chunks)} chunks")
+    print(f"Index créé avec {len(all_chunks)} chunks\n")
 
-    # 2. Tester la recherche
-    question = "Comment Word2Vec calcule les scores ?"
-    print("Question :", question)
-    for r in search(question, k=3):
-        print(f"- score {r['score']:.3f} | {r['source']} | page {r['page']} | {r['text'][:100]}...")
+    # 2. Tester des questions dans et hors du cours
+    questions = [
+        # داخل الكورس
+        "Comment Word2Vec calcule les scores ?",
+        "C'est quoi le skip-gram ?",
+        "Quelles sont les limites de Word2Vec ?",
+        "Qu'est-ce que le Masked Language Modeling ?",
+        "Quelle est la différence entre BoW et TF-IDF ?",
+        # خارج الكورس
+        "Comment faire un couscous ?",
+        "Qui a gagné la Coupe du monde 2018 ?",
+        "Quelle est la capitale du Japon ?",
+        "Comment installer Windows 11 ?",
+        "Quel est le meilleur club de football en Tunisie ?",
+    ]
+    for q in questions:
+        results = search(q, k=3)
+        best = results[0]
+        print(f"Q : {q}")
+        print(f"   meilleur score : {best['score']:.3f} | {best['source']} | page {best['page']}")
