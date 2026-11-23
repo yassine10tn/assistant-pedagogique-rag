@@ -6,3 +6,6 @@ __pycache__/
 data/processed/
 frontend/node_modules/
 frontend/.next/
+data/users.db
+*.db
+frontend/.env.local

@@ -92,3 +92,50 @@ def quiz(req: QuizRequest):
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e))
     return {"topic": req.topic, "questions": questions}
+
+# ---------- Authentification (email + mot de passe) ----------
+from src.users import create_user, verify_user
+
+
+class RegisterRequest(BaseModel):
+    name: str = ""
+    email: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/auth/register")
+def register(req: RegisterRequest):
+    if "@" not in req.email or len(req.password) < 8:
+        raise HTTPException(status_code=400, detail="Email invalide ou mot de passe trop court (8 caractères minimum).")
+    try:
+        return create_user(req.name or req.email.split("@")[0], req.email, req.password)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/auth/login")
+def login(req: LoginRequest):
+    user = verify_user(req.email, req.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Identifiants incorrects.")
+    return user
+
+# ---------- Enregistrement des utilisateurs Google ----------
+from src.users import upsert_google_user
+
+
+class GoogleUser(BaseModel):
+    name: str = ""
+    email: str
+
+
+@app.post("/auth/google")
+def google_user(req: GoogleUser):
+    if "@" not in req.email:
+        raise HTTPException(status_code=400, detail="Email invalide.")
+    return upsert_google_user(req.name, req.email)
