@@ -16,4 +16,5 @@ export default auth((req) => {
 });
 
 export const config = {
-matcher: ["/chat/:path*", "/summary/:path*", "/quiz/:path*", "/documents/:path*", "/profile/:path*", "/admin/:path*"],};
+  matcher: ["/chat/:path*", "/summary/:path*", "/quiz/:path*", "/documents/:path*", "/profile/:path*", "/admin/:path*"],
+};

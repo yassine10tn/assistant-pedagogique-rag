@@ -1,21 +1,27 @@
-"""API FastAPI : RAG + authentification sécurisée (rôles, JWT, verrouillage, audit)."""
+"""API FastAPI : RAG + authentification sécurisée + administration."""
 
+import json
+import time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from src.chatlog import chat_stats, clear_chats, delete_chat, list_chats, log_chat
 from src.quiz import generate_quiz
-from src.rag import answer
+from src.rag import NO_ANSWER, answer
 from src.ratelimit import hit
-from src.retriever import rebuild_index
+from src.retriever import CHUNKS_FILE, INDEX_FILE, rebuild_index
 from src.security import create_token, current_user, require_admin, require_internal
 from src.summarizer import summarize_pdf
 from src.users import (
-    change_password, create_user, delete_user, list_audit,
-    update_name, upsert_google_user, verify_user,
+    AccountDisabled, AccountLocked, GoogleOnlyAccount, InvalidCredentials,
+    admin_emails, admin_update, change_password, check_password_strength, count_admins,
+    create_user, delete_user, get_user, list_audit, list_users, log_event,
+    unlock_user, update_name, upsert_google_user, user_stats, verify_user,
 )
 
 RAW_DIR = Path("data/raw")
@@ -30,6 +36,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ---------- Modèles ----------
 
 class ChatRequest(BaseModel):
     question: str
@@ -71,6 +79,24 @@ class PasswordRequest(BaseModel):
     new: str
 
 
+class UserCreate(BaseModel):
+    name: str = ""
+    email: str
+    password: str
+    role: Literal["user", "admin"] = "user"
+
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    role: Optional[Literal["user", "admin"]] = None
+    active: Optional[bool] = None
+
+
+def _minutes(seconds: int) -> str:
+    m = max(1, -(-seconds // 60))
+    return f"{m} minute{'s' if m > 1 else ''}"
+
+
 # ---------- Public ----------
 
 @app.get("/health")
@@ -80,24 +106,47 @@ def health():
 
 @app.post("/auth/register")
 def register(req: RegisterRequest, request: Request):
-    hit(f"register:{request.client.host}", 10, 3600)
+    hit(f"register:{request.client.host if request.client else '?'}", 10, 3600)
     if "@" not in req.email:
         raise HTTPException(status_code=400, detail="Email invalide.")
     try:
-        return create_user(req.name or req.email.split("@")[0], req.email, req.password)
+        check_password_strength(req.password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
+        user = create_user(req.name or req.email.split("@")[0], req.email, req.password)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    return {**user, "token": create_token(user)}
 
 
 @app.post("/auth/login")
-def login(req: LoginRequest):
+def login(req: LoginRequest, request: Request):
+    hit(f"login-ip:{request.client.host if request.client else '?'}", 30, 60)
     hit(f"login:{req.email.strip().lower()}", 10, 60)
     try:
         user = verify_user(req.email, req.password)
-    except PermissionError as e:
-        raise HTTPException(status_code=423, detail=str(e))
-    if not user:
-        raise HTTPException(status_code=401, detail="Identifiants incorrects ou compte désactivé.")
+    except AccountLocked as e:
+        raise HTTPException(status_code=423, detail={
+            "code": "locked", "seconds": e.seconds,
+            "message": f"Trop de tentatives échouées : compte verrouillé. Réessayez dans {_minutes(e.seconds)}.",
+        })
+    except AccountDisabled:
+        raise HTTPException(status_code=403, detail={
+            "code": "disabled", "message": "Ce compte a été désactivé. Contactez un administrateur.",
+        })
+    except GoogleOnlyAccount:
+        raise HTTPException(status_code=401, detail={
+            "code": "google_only",
+            "message": "Ce compte utilise Google. Cliquez sur « Continuer avec Google ».",
+        })
+    except InvalidCredentials as e:
+        if e.remaining is None:
+            msg = "Email ou mot de passe incorrect."
+        else:
+            msg = (f"Mot de passe incorrect. Il vous reste {e.remaining} tentative"
+                   f"{'s' if e.remaining > 1 else ''} avant le verrouillage du compte (15 minutes).")
+        raise HTTPException(status_code=401, detail={"code": "invalid", "remaining": e.remaining, "message": msg})
     return {**user, "token": create_token(user)}
 
 
@@ -137,6 +186,8 @@ def password(req: PasswordRequest, user: dict = Depends(current_user)):
 
 @app.delete("/auth/me")
 def delete_me(user: dict = Depends(current_user)):
+    if user["email"] in admin_emails():
+        raise HTTPException(status_code=400, detail="Le compte administrateur principal ne peut pas être supprimé.")
     delete_user(user["id"])
     return {"ok": True}
 
@@ -157,6 +208,7 @@ def upload(file: UploadFile = File(...), user: dict = Depends(current_user)):
         n_chunks = rebuild_index()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur d'indexation : {e}")
+    log_event(user["email"], "document_uploaded", name)
     return {"filename": name, "chunks": n_chunks}
 
 
@@ -164,7 +216,17 @@ def upload(file: UploadFile = File(...), user: dict = Depends(current_user)):
 def chat(req: ChatRequest, user: dict = Depends(current_user)):
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="La question est vide.")
-    return answer(req.question)
+    t0 = time.time()
+    try:
+        result = answer(req.question)
+    except FileNotFoundError:
+        raise HTTPException(status_code=409, detail="Aucun document indexé. Ajoutez un PDF dans « Documents ».")
+    ms = int((time.time() - t0) * 1000)
+    try:
+        log_chat(user["email"], req.question, result["answer"], result["sources"], NO_ANSWER in result["answer"], ms)
+    except Exception:
+        pass
+    return result
 
 
 @app.post("/summary")
@@ -182,18 +244,166 @@ def quiz(req: QuizRequest, user: dict = Depends(current_user)):
         raise HTTPException(status_code=400, detail="n doit être entre 1 et 10.")
     try:
         questions = generate_quiz(req.topic, n=req.n, difficulty=req.difficulty)
+    except FileNotFoundError:
+        raise HTTPException(status_code=409, detail="Aucun document indexé.")
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e))
     return {"topic": req.topic, "questions": questions}
 
 
-# ---------- Admin ----------
+# ---------- Admin : général ----------
 
 @app.get("/admin/ping")
-def admin_ping(user: dict = Depends(require_admin)):
-    return {"ok": True, "admin": user["email"]}
+def admin_ping(admin: dict = Depends(require_admin)):
+    return {"ok": True, "admin": admin["email"]}
+
+
+@app.get("/admin/stats")
+def admin_stats(admin: dict = Depends(require_admin)):
+    n_chunks = 0
+    if CHUNKS_FILE.exists():
+        n_chunks = len(json.loads(CHUNKS_FILE.read_text(encoding="utf-8")))
+    return {
+        "users": user_stats(),
+        "chats": chat_stats(),
+        "documents": len(list(RAW_DIR.glob("*.pdf"))),
+        "chunks": n_chunks,
+    }
 
 
 @app.get("/admin/audit")
-def admin_audit(user: dict = Depends(require_admin)):
-    return {"events": list_audit(100)}
+def admin_audit(limit: int = 200, admin: dict = Depends(require_admin)):
+    return {"events": list_audit(min(limit, 1000))}
+
+
+# ---------- Admin : utilisateurs ----------
+
+@app.get("/admin/users")
+def admin_users(q: str = "", admin: dict = Depends(require_admin)):
+    return {"users": list_users(q)}
+
+
+@app.post("/admin/users")
+def admin_create_user(req: UserCreate, admin: dict = Depends(require_admin)):
+    if "@" not in req.email:
+        raise HTTPException(status_code=400, detail="Email invalide.")
+    try:
+        check_password_strength(req.password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
+        return create_user(req.name or req.email.split("@")[0], req.email, req.password, req.role, actor=admin["email"])
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.patch("/admin/users/{uid}")
+def admin_patch_user(uid: str, req: UserUpdate, admin: dict = Depends(require_admin)):
+    target = get_user(uid)
+    if not target:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
+    if req.role is not None or req.active is not None:
+        if target["id"] == admin["id"]:
+            raise HTTPException(status_code=400, detail="Vous ne pouvez pas modifier votre propre rôle ou statut.")
+        if target["email"] in admin_emails():
+            raise HTTPException(status_code=400, detail="Compte administrateur principal : protégé.")
+    if target["role"] == "admin" and count_admins() <= 1 and (req.role == "user" or req.active is False):
+        raise HTTPException(status_code=400, detail="Impossible : c'est le dernier administrateur.")
+    try:
+        user = admin_update(uid, req.name, req.role, req.active)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    log_event(admin["email"], "admin_update_user", f"{target['email']} : {req.model_dump(exclude_none=True)}")
+    return user
+
+
+@app.post("/admin/users/{uid}/unlock")
+def admin_unlock(uid: str, admin: dict = Depends(require_admin)):
+    target = get_user(uid)
+    if not target:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
+    unlock_user(uid)
+    log_event(admin["email"], "admin_unlock_user", target["email"])
+    return {"ok": True}
+
+
+@app.delete("/admin/users/{uid}")
+def admin_delete_user(uid: str, admin: dict = Depends(require_admin)):
+    target = get_user(uid)
+    if not target:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
+    if target["id"] == admin["id"]:
+        raise HTTPException(status_code=400, detail="Vous ne pouvez pas supprimer votre propre compte ici.")
+    if target["email"] in admin_emails():
+        raise HTTPException(status_code=400, detail="Compte administrateur principal : protégé.")
+    if target["role"] == "admin" and count_admins() <= 1:
+        raise HTTPException(status_code=400, detail="Impossible : c'est le dernier administrateur.")
+    delete_user(uid, actor=admin["email"])
+    return {"ok": True}
+
+
+# ---------- Admin : documents ----------
+
+def _reindex() -> int:
+    if any(RAW_DIR.glob("*.pdf")):
+        return rebuild_index()
+    for f in (INDEX_FILE, CHUNKS_FILE):
+        f.unlink(missing_ok=True)
+    return 0
+
+
+@app.get("/admin/documents")
+def admin_documents(admin: dict = Depends(require_admin)):
+    docs = []
+    for p in sorted(RAW_DIR.glob("*.pdf")):
+        st = p.stat()
+        docs.append({
+            "name": p.name, "size": st.st_size,
+            "modified": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(timespec="seconds"),
+        })
+    return {"documents": docs}
+
+
+@app.delete("/admin/documents/{name}")
+def admin_delete_document(name: str, admin: dict = Depends(require_admin)):
+    path = RAW_DIR / Path(name).name
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Document introuvable.")
+    path.unlink()
+    try:
+        chunks = _reindex()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur de réindexation : {e}")
+    log_event(admin["email"], "admin_delete_document", path.name)
+    return {"ok": True, "chunks": chunks}
+
+
+@app.post("/admin/reindex")
+def admin_reindex(admin: dict = Depends(require_admin)):
+    try:
+        chunks = _reindex()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur de réindexation : {e}")
+    log_event(admin["email"], "admin_reindex", f"{chunks} chunks")
+    return {"chunks": chunks}
+
+
+# ---------- Admin : historique du chat ----------
+
+@app.get("/admin/chats")
+def admin_chats(q: str = "", limit: int = 200, admin: dict = Depends(require_admin)):
+    return {"chats": list_chats(q, min(limit, 1000))}
+
+
+@app.delete("/admin/chats/{cid}")
+def admin_delete_chat(cid: int, admin: dict = Depends(require_admin)):
+    if not delete_chat(cid):
+        raise HTTPException(status_code=404, detail="Entrée introuvable.")
+    return {"ok": True}
+
+
+@app.delete("/admin/chats")
+def admin_clear_chats(admin: dict = Depends(require_admin)):
+    clear_chats()
+    log_event(admin["email"], "admin_clear_chats")
+    return {"ok": True}

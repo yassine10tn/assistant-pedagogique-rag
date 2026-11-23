@@ -7,18 +7,17 @@ const API = "http://localhost:8000";
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
     Google,
+    // La page de login vérifie le mot de passe auprès du backend ; ici on valide seulement le token reçu.
     Credentials({
-      credentials: { email: {}, password: {} },
+      credentials: { token: {} },
       async authorize(credentials) {
         try {
-          const res = await fetch(`${API}/auth/login`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: credentials.email, password: credentials.password }),
+          const res = await fetch(`${API}/auth/me`, {
+            headers: { Authorization: `Bearer ${credentials.token}` },
           });
           if (!res.ok) return null;
           const u = await res.json();
-          return { id: u.id, name: u.name, email: u.email, role: u.role, accessToken: u.token };
+          return { id: u.id, name: u.name, email: u.email, role: u.role, accessToken: credentials.token };
         } catch {
           return null;
         }

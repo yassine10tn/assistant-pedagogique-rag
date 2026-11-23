@@ -1,4 +1,4 @@
-"""Utilisateurs (SQLite) : comptes, rôles, verrouillage, journal d'audit."""
+"""Utilisateurs (SQLite) : comptes, rôles, verrouillage, audit, administration."""
 
 import hashlib
 import hmac
@@ -7,7 +7,7 @@ import re
 import sqlite3
 import time
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -26,6 +26,26 @@ _NEEDED = {
     "failed_attempts": "INTEGER NOT NULL DEFAULT 0",
     "locked_until": "INTEGER NOT NULL DEFAULT 0",
 }
+
+
+class InvalidCredentials(Exception):
+    def __init__(self, remaining=None):
+        super().__init__("invalid")
+        self.remaining = remaining
+
+
+class AccountLocked(Exception):
+    def __init__(self, seconds):
+        super().__init__("locked")
+        self.seconds = seconds
+
+
+class AccountDisabled(Exception):
+    pass
+
+
+class GoogleOnlyAccount(Exception):
+    pass
 
 
 def admin_emails() -> set:
@@ -66,11 +86,23 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-_COLS = "id, name, email, role, active"
+def last_days(n: int = 7) -> list:
+    today = datetime.now(timezone.utc).date()
+    return [(today - timedelta(days=i)).isoformat() for i in range(n - 1, -1, -1)]
+
+
+def day_series(counts: dict, n: int = 7) -> list:
+    return [{"label": f"{d[8:10]}/{d[5:7]}", "value": counts.get(d, 0)} for d in last_days(n)]
+
+
+_COLS = "id, name, email, role, active, provider"
 
 
 def _user(row) -> dict:
-    return {"id": str(row[0]), "name": row[1], "email": row[2], "role": row[3], "active": bool(row[4])}
+    return {
+        "id": str(row[0]), "name": row[1], "email": row[2],
+        "role": row[3], "active": bool(row[4]), "provider": row[5],
+    }
 
 
 # ---------- Audit ----------
@@ -95,14 +127,13 @@ def list_audit(limit: int = 100) -> list:
 # ---------- Mot de passe ----------
 
 def check_password_strength(password: str) -> None:
-    """Lève ValueError si le mot de passe est trop faible."""
     if len(password) < 8 or not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
         raise ValueError("Mot de passe : 8 caractères minimum, avec au moins une lettre et un chiffre.")
 
 
 # ---------- Comptes ----------
 
-def create_user(name: str, email: str, password: str) -> dict:
+def create_user(name: str, email: str, password: str, role: str = "user", actor: str = None) -> dict:
     email = email.strip().lower()
     if email in admin_emails():
         raise ValueError("Cet email est réservé : connectez-vous avec Google.")
@@ -113,18 +144,21 @@ def create_user(name: str, email: str, password: str) -> dict:
             with con:
                 cur = con.execute(
                     "INSERT INTO users (name, email, salt, hash, provider, created_at, role, active) "
-                    "VALUES (?, ?, ?, ?, 'email', ?, 'user', 1)",
-                    (name.strip(), email, salt, _hash(password, salt), _now()),
+                    "VALUES (?, ?, ?, ?, 'email', ?, ?, 1)",
+                    (name.strip(), email, salt, _hash(password, salt), _now(), role),
                 )
                 uid = cur.lastrowid
     except sqlite3.IntegrityError:
         raise ValueError("Cet email est déjà utilisé.")
-    log_event(email, "register")
-    return {"id": str(uid), "name": name.strip(), "email": email, "role": "user", "active": True}
+    if actor:
+        log_event(actor, "admin_create_user", f"{email} ({role})")
+    else:
+        log_event(email, "register")
+    return get_user(str(uid))
 
 
-def verify_user(email: str, password: str):
-    """Retourne l'utilisateur si OK. Lève PermissionError si le compte est verrouillé."""
+def verify_user(email: str, password: str) -> dict:
+    """Retourne l'utilisateur, ou lève InvalidCredentials / AccountLocked / AccountDisabled / GoogleOnlyAccount."""
     email = email.strip().lower()
     now = int(time.time())
     with closing(_connect()) as con:
@@ -134,26 +168,30 @@ def verify_user(email: str, password: str):
         ).fetchone()
         if not row:
             log_event(email, "login_failed", "compte inconnu")
-            return None
-        if row[8] > now:
-            minutes = (row[8] - now) // 60 + 1
+            raise InvalidCredentials(None)
+        uid, salt, pwd_hash, failed, locked_until = row[0], row[6], row[7], row[8], row[9]
+        if locked_until > now:
             log_event(email, "login_blocked", "compte verrouillé")
-            raise PermissionError(f"Compte verrouillé. Réessayez dans {minutes} min.")
-        if not row[4] or not row[5] or not row[6]:
-            log_event(email, "login_failed", "compte désactivé ou sans mot de passe")
-            return None
-        if not hmac.compare_digest(row[6], _hash(password, row[5])):
-            attempts = row[7] + 1
-            locked = now + LOCK_SECONDS if attempts >= MAX_ATTEMPTS else 0
+            raise AccountLocked(locked_until - now)
+        if not salt or not pwd_hash:
+            log_event(email, "login_failed", "compte Google sans mot de passe")
+            raise GoogleOnlyAccount()
+        if not hmac.compare_digest(pwd_hash, _hash(password, salt)):
+            attempts = failed + 1
+            if attempts >= MAX_ATTEMPTS:
+                with con:
+                    con.execute("UPDATE users SET failed_attempts=0, locked_until=? WHERE id=?", (now + LOCK_SECONDS, uid))
+                log_event(email, "account_locked", f"{MAX_ATTEMPTS} échecs, verrouillé 15 min")
+                raise AccountLocked(LOCK_SECONDS)
             with con:
-                con.execute(
-                    "UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?",
-                    (0 if locked else attempts, locked, row[0]),
-                )
-            log_event(email, "login_failed", "verrouillé 15 min" if locked else f"tentative {attempts}")
-            return None
+                con.execute("UPDATE users SET failed_attempts=? WHERE id=?", (attempts, uid))
+            log_event(email, "login_failed", f"tentative {attempts}/{MAX_ATTEMPTS}")
+            raise InvalidCredentials(MAX_ATTEMPTS - attempts)
+        if not row[4]:
+            log_event(email, "login_failed", "compte désactivé")
+            raise AccountDisabled()
         with con:
-            con.execute("UPDATE users SET failed_attempts=0, locked_until=0 WHERE id=?", (row[0],))
+            con.execute("UPDATE users SET failed_attempts=0, locked_until=0 WHERE id=?", (uid,))
     log_event(email, "login_ok")
     return _user(row)
 
@@ -168,7 +206,6 @@ def upsert_google_user(name: str, email: str) -> dict:
                 if is_admin and row[3] != "admin":
                     con.execute("UPDATE users SET role='admin' WHERE email=?", (email,))
                     row = con.execute(f"SELECT {_COLS} FROM users WHERE email = ?", (email,)).fetchone()
-                user = _user(row)
             else:
                 cur = con.execute(
                     "INSERT INTO users (name, email, provider, created_at, role, active) "
@@ -176,9 +213,8 @@ def upsert_google_user(name: str, email: str) -> dict:
                     (name.strip() or email.split("@")[0], email, _now(), "admin" if is_admin else "user"),
                 )
                 row = con.execute(f"SELECT {_COLS} FROM users WHERE id = ?", (cur.lastrowid,)).fetchone()
-                user = _user(row)
     log_event(email, "login_google")
-    return user
+    return _user(row)
 
 
 def get_user(user_id: str):
@@ -214,11 +250,87 @@ def change_password(user_id: str, current: str, new: str) -> None:
     log_event(row[0], "password_changed")
 
 
-def delete_user(user_id: str) -> None:
+def delete_user(user_id: str, actor: str = None) -> None:
     user = get_user(user_id)
     if not user:
         return
     with closing(_connect()) as con:
         with con:
             con.execute("DELETE FROM users WHERE id=?", (user_id,))
-    log_event(user["email"], "account_deleted")
+    if actor:
+        log_event(actor, "admin_delete_user", user["email"])
+    else:
+        log_event(user["email"], "account_deleted")
+
+
+# ---------- Administration ----------
+
+def list_users(q: str = "") -> list:
+    now = int(time.time())
+    like = f"%{q.strip().lower()}%"
+    with closing(_connect()) as con:
+        rows = con.execute(
+            f"SELECT {_COLS}, created_at, failed_attempts, locked_until FROM users "
+            "WHERE lower(email) LIKE ? OR lower(COALESCE(name,'')) LIKE ? ORDER BY id DESC",
+            (like, like),
+        ).fetchall()
+    admins = admin_emails()
+    out = []
+    for r in rows:
+        u = _user(r)
+        u.update(created_at=r[6], failed_attempts=r[7], locked=r[8] > now, protected=u["email"] in admins)
+        out.append(u)
+    return out
+
+
+def admin_update(uid: str, name=None, role=None, active=None) -> dict:
+    sets, vals = [], []
+    if name is not None:
+        if not name.strip():
+            raise ValueError("Le nom ne peut pas être vide.")
+        sets.append("name=?")
+        vals.append(name.strip())
+    if role is not None:
+        sets.append("role=?")
+        vals.append(role)
+    if active is not None:
+        sets.append("active=?")
+        vals.append(1 if active else 0)
+    if sets:
+        with closing(_connect()) as con:
+            with con:
+                con.execute(f"UPDATE users SET {', '.join(sets)} WHERE id=?", (*vals, uid))
+    return get_user(uid)
+
+
+def unlock_user(uid: str) -> None:
+    with closing(_connect()) as con:
+        with con:
+            con.execute("UPDATE users SET failed_attempts=0, locked_until=0 WHERE id=?", (uid,))
+
+
+def count_admins() -> int:
+    with closing(_connect()) as con:
+        return con.execute("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1").fetchone()[0]
+
+
+def user_stats() -> dict:
+    now = int(time.time())
+    days = last_days()
+    with closing(_connect()) as con:
+        def q(sql, *a):
+            return con.execute(sql, a).fetchone()[0]
+        total = q("SELECT COUNT(*) FROM users")
+        google = q("SELECT COUNT(*) FROM users WHERE provider='google'")
+        signups = dict(con.execute(
+            "SELECT substr(created_at,1,10), COUNT(*) FROM users WHERE created_at >= ? GROUP BY 1", (days[0],)
+        ).fetchall())
+        return {
+            "total": total,
+            "active": q("SELECT COUNT(*) FROM users WHERE active=1"),
+            "admins": q("SELECT COUNT(*) FROM users WHERE role='admin'"),
+            "google": google,
+            "email": total - google,
+            "locked": q("SELECT COUNT(*) FROM users WHERE locked_until > ?", now),
+            "signups": day_series(signups),
+        }
