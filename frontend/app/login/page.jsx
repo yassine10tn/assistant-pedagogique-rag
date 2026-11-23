@@ -21,7 +21,7 @@ export default function LoginPage() {
     const res = await signIn("credentials", { email, password, redirect: false });
     setLoading(false);
     if (res?.error) {
-      setError("Email ou mot de passe incorrect.");
+      setError("Email ou mot de passe incorrect, ou compte verrouillé (5 essais max, blocage 15 min).");
       return;
     }
     router.push("/");

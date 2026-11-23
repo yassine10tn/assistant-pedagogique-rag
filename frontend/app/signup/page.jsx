@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { useState } from "react";
 import GoogleButton from "../../components/GoogleButton";
+import PasswordStrength from "../../components/PasswordStrength";
 import { API } from "../../lib/api";
 import { Button, Card, PageHeader, inputClass } from "../../components/ui";
 
@@ -20,7 +21,6 @@ export default function SignupPage() {
   async function submit(e) {
     e.preventDefault();
     setError("");
-    if (password.length < 8) return setError("Mot de passe : 8 caractères minimum.");
     if (password !== confirm) return setError("Les mots de passe ne correspondent pas.");
     setLoading(true);
     try {
@@ -30,7 +30,7 @@ export default function SignupPage() {
         body: JSON.stringify({ name, email, password }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || "Erreur lors de l'inscription.");
+      if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Erreur lors de l'inscription.");
       await signIn("credentials", { email, password, redirect: false });
       router.push("/");
       router.refresh();
@@ -51,7 +51,8 @@ export default function SignupPage() {
         <form onSubmit={submit} className="space-y-3">
           <input className={inputClass} placeholder="Nom complet" value={name} onChange={(e) => setName(e.target.value)} required />
           <input className={inputClass} type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-          <input className={inputClass} type="password" placeholder="Mot de passe (8 caractères min.)" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <input className={inputClass} type="password" placeholder="Mot de passe" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <PasswordStrength password={password} />
           <input className={inputClass} type="password" placeholder="Confirmer le mot de passe" value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
           {error && <p className="text-sm text-rose-400">{error}</p>}
           <Button type="submit" className="w-full" disabled={loading}>

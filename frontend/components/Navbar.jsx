@@ -7,7 +7,7 @@ import { signOut, useSession } from "next-auth/react";
 import { API } from "../lib/api";
 import ThemeToggle from "./ThemeToggle";
 
-const LINKS = [
+const BASE_LINKS = [
   { href: "/", label: "Accueil" },
   { href: "/chat", label: "Chat" },
   { href: "/summary", label: "Résumés" },
@@ -20,14 +20,13 @@ function Avatar({ user }) {
     return <img src={user.image} alt="" referrerPolicy="no-referrer" className="h-8 w-8 rounded-full" />;
   }
   const initial = (user?.name || user?.email || "?")[0].toUpperCase();
-  return (
-    <span className="btn-glow flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold">{initial}</span>
-  );
+  return <span className="btn-glow flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold">{initial}</span>;
 }
 
 export default function Navbar() {
   const pathname = usePathname();
   const { data: session, status } = useSession();
+  const LINKS = session?.user?.role === "admin" ? [...BASE_LINKS, { href: "/admin", label: "Admin" }] : BASE_LINKS;
   const [open, setOpen] = useState(false);
   const [menu, setMenu] = useState(false);
   const [online, setOnline] = useState(false);
@@ -84,6 +83,10 @@ export default function Navbar() {
               {menu && (
                 <div className="animate-up menu-panel absolute right-0 mt-2 w-56 rounded-2xl border border-white/10 p-2 shadow-xl">
                   <div className="truncate px-3 py-2 text-xs text-slate-400">{session.user.email}</div>
+                  <Link href="/profile" onClick={() => setMenu(false)}
+                    className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">
+                    Mon profil
+                  </Link>
                   <button onClick={() => signOut({ callbackUrl: "/" })}
                     className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">
                     Se déconnecter
