@@ -405,3 +405,49 @@ async def ollama_down(request: Request, exc: ConnectionError):
         status_code=503,
         content={"detail": "Ollama n'est pas démarré. Lancez l'application Ollama puis réessayez."},
     )
+
+# ---------- Admin : évaluation du RAG ----------
+from src import evaluation
+
+
+class EvalRequest(BaseModel):
+    in_questions: list[str]
+    out_questions: list[str]
+    full: bool = True
+
+
+@app.get("/admin/eval/defaults")
+def eval_defaults(admin: dict = Depends(require_admin)):
+    return {"in": evaluation.DEFAULT_IN, "out": evaluation.DEFAULT_OUT}
+
+
+@app.post("/admin/eval/run")
+def eval_run(req: EvalRequest, admin: dict = Depends(require_admin)):
+    ins = [q.strip() for q in req.in_questions if q.strip()][:30]
+    outs = [q.strip() for q in req.out_questions if q.strip()][:30]
+    if not ins or not outs:
+        raise HTTPException(status_code=400, detail="Fournissez des questions dans et hors du cours.")
+    try:
+        evaluation.start(ins, outs, req.full)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    log_event(admin["email"], "admin_eval_run", f"{len(ins)}+{len(outs)} questions")
+    return {"started": True}
+
+
+@app.get("/admin/eval/status")
+def eval_status(admin: dict = Depends(require_admin)):
+    return evaluation.status()
+
+
+@app.get("/admin/eval/runs")
+def eval_runs(admin: dict = Depends(require_admin)):
+    return {"runs": evaluation.list_runs()}
+
+
+@app.get("/admin/eval/runs/{run_id}")
+def eval_get_run(run_id: int, admin: dict = Depends(require_admin)):
+    run = evaluation.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Évaluation introuvable.")
+    return {"run": run}
