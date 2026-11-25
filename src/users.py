@@ -158,43 +158,25 @@ def create_user(name: str, email: str, password: str, role: str = "user", actor:
 
 
 def verify_user(email: str, password: str) -> dict:
-    """Retourne l'utilisateur, ou lève InvalidCredentials / AccountLocked / AccountDisabled / GoogleOnlyAccount."""
+    """Retourne l'utilisateur ou lève InvalidCredentials / AccountDisabled / GoogleOnlyAccount."""
     email = email.strip().lower()
-    now = int(time.time())
     with closing(_connect()) as con:
-        row = con.execute(
-            f"SELECT {_COLS}, salt, hash, failed_attempts, locked_until FROM users WHERE email = ?",
-            (email,),
-        ).fetchone()
-        if not row:
-            log_event(email, "login_failed", "compte inconnu")
-            raise InvalidCredentials(None)
-        uid, salt, pwd_hash, failed, locked_until = row[0], row[6], row[7], row[8], row[9]
-        if locked_until > now:
-            log_event(email, "login_blocked", "compte verrouillé")
-            raise AccountLocked(locked_until - now)
-        if not salt or not pwd_hash:
-            log_event(email, "login_failed", "compte Google sans mot de passe")
-            raise GoogleOnlyAccount()
-        if not hmac.compare_digest(pwd_hash, _hash(password, salt)):
-            attempts = failed + 1
-            if attempts >= MAX_ATTEMPTS:
-                with con:
-                    con.execute("UPDATE users SET failed_attempts=0, locked_until=? WHERE id=?", (now + LOCK_SECONDS, uid))
-                log_event(email, "account_locked", f"{MAX_ATTEMPTS} échecs, verrouillé 15 min")
-                raise AccountLocked(LOCK_SECONDS)
-            with con:
-                con.execute("UPDATE users SET failed_attempts=? WHERE id=?", (attempts, uid))
-            log_event(email, "login_failed", f"tentative {attempts}/{MAX_ATTEMPTS}")
-            raise InvalidCredentials(MAX_ATTEMPTS - attempts)
-        if not row[4]:
-            log_event(email, "login_failed", "compte désactivé")
-            raise AccountDisabled()
-        with con:
-            con.execute("UPDATE users SET failed_attempts=0, locked_until=0 WHERE id=?", (uid,))
+        row = con.execute(f"SELECT {_COLS}, salt, hash FROM users WHERE email = ?", (email,)).fetchone()
+    if not row:
+        log_event(email, "login_failed", "compte inconnu")
+        raise InvalidCredentials()
+    salt, pwd_hash = row[6], row[7]
+    if not salt or not pwd_hash:
+        log_event(email, "login_failed", "compte Google sans mot de passe")
+        raise GoogleOnlyAccount()
+    if not hmac.compare_digest(pwd_hash, _hash(password, salt)):
+        log_event(email, "login_failed", "mot de passe incorrect")
+        raise InvalidCredentials()
+    if not row[4]:
+        log_event(email, "login_failed", "compte désactivé")
+        raise AccountDisabled()
     log_event(email, "login_ok")
     return _user(row)
-
 
 def upsert_google_user(name: str, email: str) -> dict:
     email = email.strip().lower()

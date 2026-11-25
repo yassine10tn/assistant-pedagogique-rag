@@ -126,29 +126,16 @@ def login(req: LoginRequest, request: Request):
     hit(f"login:{req.email.strip().lower()}", 10, 60)
     try:
         user = verify_user(req.email, req.password)
-    except AccountLocked as e:
-        raise HTTPException(status_code=423, detail={
-            "code": "locked", "seconds": e.seconds,
-            "message": f"Trop de tentatives échouées : compte verrouillé. Réessayez dans {_minutes(e.seconds)}.",
-        })
     except AccountDisabled:
         raise HTTPException(status_code=403, detail={
-            "code": "disabled", "message": "Ce compte a été désactivé. Contactez un administrateur.",
-        })
+            "code": "disabled", "message": "Ce compte a été désactivé. Contactez un administrateur."})
     except GoogleOnlyAccount:
         raise HTTPException(status_code=401, detail={
-            "code": "google_only",
-            "message": "Ce compte utilise Google. Cliquez sur « Continuer avec Google ».",
-        })
-    except InvalidCredentials as e:
-        if e.remaining is None:
-            msg = "Email ou mot de passe incorrect."
-        else:
-            msg = (f"Mot de passe incorrect. Il vous reste {e.remaining} tentative"
-                   f"{'s' if e.remaining > 1 else ''} avant le verrouillage du compte (15 minutes).")
-        raise HTTPException(status_code=401, detail={"code": "invalid", "remaining": e.remaining, "message": msg})
+            "code": "google_only", "message": "Ce compte utilise Google. Cliquez sur « Continuer avec Google »."})
+    except InvalidCredentials:
+        raise HTTPException(status_code=401, detail={
+            "code": "invalid", "message": "Email ou mot de passe incorrect."})
     return {**user, "token": create_token(user)}
-
 
 @app.post("/auth/google", dependencies=[Depends(require_internal)])
 def google_user(req: GoogleUser):
@@ -407,3 +394,14 @@ def admin_clear_chats(admin: dict = Depends(require_admin)):
     clear_chats()
     log_event(admin["email"], "admin_clear_chats")
     return {"ok": True}
+
+# ---------- Ollama arrêté : message clair au lieu d'une erreur 500 ----------
+from fastapi.responses import JSONResponse
+
+
+@app.exception_handler(ConnectionError)
+async def ollama_down(request: Request, exc: ConnectionError):
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Ollama n'est pas démarré. Lancez l'application Ollama puis réessayez."},
+    )
