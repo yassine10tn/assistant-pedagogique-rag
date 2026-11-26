@@ -48,6 +48,9 @@ def _connect():
         "CREATE TABLE IF NOT EXISTS eval_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, "
         "mode TEXT, min_score REAL, metrics TEXT, results TEXT)"
     )
+    cols = {r[1] for r in con.execute("PRAGMA table_info(eval_runs)")}
+    if "model" not in cols:
+        con.execute("ALTER TABLE eval_runs ADD COLUMN model TEXT")
     return con
 
 
@@ -123,10 +126,10 @@ def _run(in_q: list, out_q: list, full: bool) -> None:
         with closing(_connect()) as con:
             with con:
                 cur = con.execute(
-                    "INSERT INTO eval_runs (ts, mode, min_score, metrics, results) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO eval_runs (ts, mode, min_score, metrics, results, model) VALUES (?, ?, ?, ?, ?, ?)",
                     (datetime.now(timezone.utc).isoformat(timespec="seconds"),
                      "complet" if full else "retrieval", MIN_SCORE,
-                     json.dumps(metrics), json.dumps(results, ensure_ascii=False)),
+                     json.dumps(metrics), json.dumps(results, ensure_ascii=False), settings.get("model")),
                 )
                 _JOB["run_id"] = cur.lastrowid
     except FileNotFoundError:
@@ -139,17 +142,17 @@ def _run(in_q: list, out_q: list, full: bool) -> None:
 
 def list_runs(limit: int = 20) -> list:
     with closing(_connect()) as con:
-        rows = con.execute("SELECT id, ts, mode, min_score, metrics FROM eval_runs "
+        rows = con.execute("SELECT id, ts, mode, min_score, metrics, model FROM eval_runs "
                            "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-    return [{"id": r[0], "ts": r[1], "mode": r[2], "min_score": r[3],
+    return [{"id": r[0], "ts": r[1], "mode": r[2], "min_score": r[3], "model": r[5] or "?",
              "accuracy_pct": json.loads(r[4]).get("accuracy_pct")} for r in rows]
 
 
 def get_run(run_id: int):
     with closing(_connect()) as con:
-        r = con.execute("SELECT id, ts, mode, min_score, metrics, results FROM eval_runs WHERE id=?",
+        r = con.execute("SELECT id, ts, mode, min_score, metrics, results, model FROM eval_runs WHERE id=?",
                         (run_id,)).fetchone()
     if not r:
         return None
-    return {"id": r[0], "ts": r[1], "mode": r[2], "min_score": r[3],
+    return {"id": r[0], "ts": r[1], "mode": r[2], "min_score": r[3], "model": r[6] or "?",
             "metrics": json.loads(r[4]), "results": json.loads(r[5])}

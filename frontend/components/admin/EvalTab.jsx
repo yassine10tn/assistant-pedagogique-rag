@@ -114,7 +114,7 @@ export default function EvalTab() {
           <span className="text-sm text-slate-400">Historique :</span>
           {runs.map((r) => (
             <button key={r.id} onClick={() => loadRun(r.id)} className={`rounded-full px-3 py-1 text-xs transition ${run?.id === r.id ? "btn-glow" : "border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"}`}>
-              #{r.id} · {r.mode} · seuil {r.min_score} · {pct(r.accuracy_pct)}
+              #{r.id} · {r.model} · {r.mode} · seuil {r.min_score} · {pct(r.accuracy_pct)}
             </button>
           ))}
         </div>
@@ -122,7 +122,7 @@ export default function EvalTab() {
 
       {run && m && (
         <>
-          <p className="text-sm text-slate-400">Évaluation #{run.id} · {dateFmt(run.ts)} UTC · seuil {run.min_score} · mode {run.mode}</p>
+          <p className="text-sm text-slate-400">Évaluation #{run.id} · {dateFmt(run.ts)} UTC · modèle {run.model} · seuil {run.min_score} · mode {run.mode}</p>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard icon="🎯" label="Précision globale" value={pct(m.accuracy_pct)} hint={`${m.n_in + m.n_out} questions`} />
