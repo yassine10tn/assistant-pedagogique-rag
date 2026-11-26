@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { get, send } from "../../lib/api";
 import { useConfirm, useToast } from "../Toast";
 import { Button, Card, inputClass } from "../ui";
+import ExportButton from "./ExportButton";
 import { Modal, Pill, dateFmt, td, th } from "./parts";
 
 export default function ChatsTab() {
@@ -41,6 +42,7 @@ export default function ChatsTab() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <input className={`${inputClass} !w-72`} placeholder="Rechercher (question ou utilisateur)..." value={q} onChange={(e) => setQ(e.target.value)} />
+        <ExportButton kind="chats" filename="historique_chat.csv" />
         <Button variant="secondary" onClick={clearAll} disabled={!chats.length}>🗑️ Tout effacer</Button>
       </div>
 

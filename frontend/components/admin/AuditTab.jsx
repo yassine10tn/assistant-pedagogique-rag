@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { get } from "../../lib/api";
 import { useToast } from "../Toast";
 import { Button, Card, inputClass } from "../ui";
+import ExportButton from "./ExportButton";
 import { Pill, dateFmt, td, th } from "./parts";
 
 const tone = (a) => {
@@ -31,6 +32,7 @@ export default function AuditTab() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <input className={`${inputClass} !w-72`} placeholder="Filtrer (utilisateur, action...)" value={q} onChange={(e) => setQ(e.target.value)} />
+        <ExportButton kind="audit" filename="audit.csv" />
         <Button variant="secondary" onClick={load}>↻ Actualiser</Button>
       </div>
       <Card className="overflow-x-auto">

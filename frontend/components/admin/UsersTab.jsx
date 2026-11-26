@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { get, send } from "../../lib/api";
 import { useConfirm, useToast } from "../Toast";
 import { Button, Card, inputClass } from "../ui";
+import ExportButton from "./ExportButton";
 import { Modal, Pill, dateFmt, td, th } from "./parts";
 
 const EMPTY = { name: "", email: "", password: "", role: "user" };
@@ -90,7 +91,8 @@ export default function UsersTab() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <input className={`${inputClass} !w-72`} placeholder="Rechercher (nom ou email)..." value={q} onChange={(e) => setQ(e.target.value)} />
-        <Button onClick={() => setShowCreate(true)}>＋ Nouvel utilisateur</Button>
+        <ExportButton kind="users" filename="utilisateurs.csv" />
+          <Button onClick={() => setShowCreate(true)}>＋ Nouvel utilisateur</Button>
       </div>
 
       <Card className="overflow-x-auto">

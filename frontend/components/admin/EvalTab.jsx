@@ -1,5 +1,5 @@
 "use client";
-
+import ExportButton from "./ExportButton";
 import { useCallback, useEffect, useState } from "react";
 import { get, post } from "../../lib/api";
 import { useToast } from "../Toast";
@@ -122,8 +122,10 @@ export default function EvalTab() {
 
       {run && m && (
         <>
-          <p className="text-sm text-slate-400">Évaluation #{run.id} · {dateFmt(run.ts)} UTC · modèle {run.model} · seuil {run.min_score} · mode {run.mode}</p>
-
+<div className="flex flex-wrap items-center justify-between gap-3">
+  <p className="text-sm text-slate-400">Évaluation #{run.id} · {dateFmt(run.ts)} UTC · modèle {run.model} · seuil {run.min_score} · mode {run.mode}</p>
+  <ExportButton kind="eval" query={`?run_id=${run.id}`} filename={`evaluation_${run.id}.csv`} />
+</div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard icon="🎯" label="Précision globale" value={pct(m.accuracy_pct)} hint={`${m.n_in + m.n_out} questions`} />
             <StatCard icon="✅" label="Réponses dans le cours" value={pct(m.in_answered_pct)} hint={`${m.n_in} questions`} />

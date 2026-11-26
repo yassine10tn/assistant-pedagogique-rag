@@ -505,3 +505,63 @@ def admin_put_settings(req: SettingsUpdate, admin: dict = Depends(require_admin)
     new = settings.update(req.model_dump(exclude_none=True))
     log_event(admin["email"], "admin_update_settings", _json.dumps(new))
     return {"settings": new}
+
+
+
+# ---------- Admin : exports CSV ----------
+import csv as _csv
+import io as _io
+from fastapi.responses import Response as _Response
+from src.chatlog import list_chats
+from src.users import list_audit, list_users
+
+
+def _cell(v):
+    if v is None:
+        return ""
+    if isinstance(v, str) and v[:1] in ("=", "+", "-", "@"):
+        return "'" + v  # protection contre l'injection de formules
+    return v
+
+
+def _csv_response(filename, headers, rows):
+    buf = _io.StringIO()
+    w = _csv.writer(buf, delimiter=";")
+    w.writerow(headers)
+    for r in rows:
+        w.writerow([_cell(v) for v in r])
+    return _Response(
+        content=("\ufeff" + buf.getvalue()).encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/admin/export/{kind}")
+def admin_export(kind: str, run_id: Optional[int] = None, admin: dict = Depends(require_admin)):
+    if kind == "users":
+        rows = [[u["id"], u["name"], u["email"], u["provider"], u["role"], u["active"], u["created_at"]]
+                for u in list_users()]
+        return _csv_response("utilisateurs.csv", ["id", "nom", "email", "methode", "role", "actif", "inscrit_le"], rows)
+    if kind == "chats":
+        rows = [[c["id"], c["ts"], c["user"], c["question"], c["answer"], c["refused"], c.get("feedback", 0),
+                 c["top_score"], c["latency_ms"], "; ".join(f"{s['source']} p.{s['page']}" for s in c["sources"])]
+                for c in list_chats("", 1000)]
+        return _csv_response("historique_chat.csv",
+                             ["id", "date_utc", "utilisateur", "question", "reponse", "refusee", "feedback",
+                              "score", "temps_ms", "sources"], rows)
+    if kind == "audit":
+        rows = [[e["ts"], e["actor"], e["action"], e["detail"]] for e in list_audit(1000)]
+        return _csv_response("audit.csv", ["date_utc", "utilisateur", "action", "detail"], rows)
+    if kind == "eval":
+        from src import evaluation
+        runs = evaluation.list_runs(1)
+        rid = run_id or (runs[0]["id"] if runs else None)
+        run = evaluation.get_run(rid) if rid else None
+        if not run:
+            raise HTTPException(status_code=404, detail="Aucune évaluation disponible.")
+        rows = [[r["kind"], r["question"], r["top_score"], r["refused"], r["correct"], r["latency_ms"]]
+                for r in run["results"]]
+        return _csv_response(f"evaluation_{run['id']}_{run.get('model', '')}.csv",
+                             ["type", "question", "score_max", "refusee", "correct", "temps_ms"], rows)
+    raise HTTPException(status_code=404, detail="Export inconnu.")

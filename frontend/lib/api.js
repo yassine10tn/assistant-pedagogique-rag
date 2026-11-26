@@ -59,3 +59,27 @@ export async function uploadPdf(file) {
   form.append("file", file);
   return handle(await request(`${API}/upload`, { method: "POST", headers: await authHeaders(), body: form }));
 }
+
+// Telechargement d'un fichier protege (CSV)
+export async function downloadFile(path, filename) {
+  const session = await getSession();
+  const res = await fetch(`${API}${path}`, {
+    headers: session?.accessToken ? { Authorization: `Bearer ${session.accessToken}` } : {},
+  });
+  if (res.status === 401) {
+    await signOut({ callbackUrl: "/login?reason=expired" });
+    throw new Error("Session expirée, reconnectez-vous.");
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(typeof err.detail === "string" ? err.detail : `Erreur ${res.status}`);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
