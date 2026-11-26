@@ -32,7 +32,7 @@ async function handle(res) {
     const err = await res.json().catch(() => ({}));
     const msg = typeof err.detail === "string" ? err.detail : `Erreur ${res.status}`;
     if (res.status === 429) notify("warning", "Trop de requêtes", msg);
-    else if (res.status >= 500) notify("error", "Erreur serveur", msg);
+    else if (res.status >= 500 && !window.__quiet) notify("error", "Erreur serveur", msg);
     throw new Error(msg);
   }
   return res.json();

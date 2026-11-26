@@ -199,6 +199,20 @@ def upload(file: UploadFile = File(...), user: dict = Depends(current_user)):
     return {"filename": name, "chunks": n_chunks}
 
 
+from src.chatlog import set_feedback
+
+
+class FeedbackRequest(BaseModel):
+    value: Literal[-1, 0, 1]
+
+
+from src.chatlog import set_feedback
+
+
+class FeedbackRequest(BaseModel):
+    value: Literal[-1, 0, 1]
+
+
 @app.post("/chat")
 def chat(req: ChatRequest, user: dict = Depends(current_user)):
     if not req.question.strip():
@@ -209,11 +223,20 @@ def chat(req: ChatRequest, user: dict = Depends(current_user)):
     except FileNotFoundError:
         raise HTTPException(status_code=409, detail="Aucun document indexé. Ajoutez un PDF dans « Documents ».")
     ms = int((time.time() - t0) * 1000)
+    cid = None
     try:
-        log_chat(user["email"], req.question, result["answer"], result["sources"], NO_ANSWER in result["answer"], ms)
+        cid = log_chat(user["email"], req.question, result["answer"], result["sources"],
+                       NO_ANSWER in result["answer"], ms)
     except Exception:
         pass
-    return result
+    return {**result, "id": cid}
+
+
+@app.post("/chat/{cid}/feedback")
+def feedback(cid: int, req: FeedbackRequest, user: dict = Depends(current_user)):
+    if not set_feedback(cid, user["email"], req.value):
+        raise HTTPException(status_code=404, detail="Conversation introuvable.")
+    return {"ok": True}
 
 
 @app.post("/summary")

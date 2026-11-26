@@ -30,21 +30,15 @@ export default function Overview() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard icon="👥" label="Utilisateurs" value={users.total} hint={`${users.active} actifs · ${users.admins} admin · ${users.locked} verrouillé(s)`} />
+        <StatCard icon="👥" label="Utilisateurs" value={users.total} hint={`${users.active} actifs · ${users.admins} admin`} />
         <StatCard icon="📚" label="Documents" value={s.documents} hint={`${s.chunks} chunks indexés`} />
-        <StatCard icon="💬" label="Questions posées" value={chats.total} hint={`${chats.today} aujourd'hui`} />
-        <StatCard icon="🚫" label="Taux de refus" value={`${refusal}%`} hint={`${chats.refused} réponses « je ne sais pas »`} />
+        <StatCard icon="💬" label="Questions posées" value={chats.total} hint={`${chats.today} aujourd'hui · refus ${refusal}%`} />
+        <StatCard icon="👍" label="Satisfaction" value={chats.satisfaction === null ? "-" : `${chats.satisfaction}%`} hint={`${chats.up} 👍 · ${chats.down} 👎`} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <h3 className="mb-4 font-semibold text-white">Questions par jour (7 jours, UTC)</h3>
-          <BarChart data={chats.per_day} />
-        </Card>
-        <Card>
-          <h3 className="mb-4 font-semibold text-white">Inscriptions par jour (7 jours, UTC)</h3>
-          <BarChart data={users.signups} />
-        </Card>
+        <Card><h3 className="mb-4 font-semibold text-white">Questions par jour (7 jours, UTC)</h3><BarChart data={chats.per_day} /></Card>
+        <Card><h3 className="mb-4 font-semibold text-white">Inscriptions par jour (7 jours, UTC)</h3><BarChart data={users.signups} /></Card>
         <Card>
           <h3 className="mb-4 font-semibold text-white">Méthode de connexion</h3>
           <Donut parts={[{ label: "Email", value: users.email, color: "#6366f1" }, { label: "Google", value: users.google, color: "#22d3ee" }]} />
@@ -52,7 +46,7 @@ export default function Overview() {
         <Card>
           <h3 className="mb-4 font-semibold text-white">Performance</h3>
           <p className="text-4xl font-extrabold text-white">{(chats.avg_latency_ms / 1000).toFixed(1)} s</p>
-          <p className="mt-1 text-sm text-slate-400">Temps de réponse moyen du chatbot (retrieval + Llama 3.1).</p>
+          <p className="mt-1 text-sm text-slate-400">Temps de réponse moyen du chatbot (retrieval + LLM).</p>
         </Card>
       </div>
     </div>
