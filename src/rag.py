@@ -59,3 +59,22 @@ if __name__ == "__main__":
         print(f"R : {result['answer']}")
         for s in result["sources"]:
             print(f"   - {s['source']}, page {s['page']} (score {s['score']})")
+
+
+def answer_stream(question: str):
+    """Générateur d'événements : d'abord les sources, puis les morceaux de texte."""
+    from src.llm import generate_stream
+
+    chunks = retrieve(question)
+    if not chunks:
+        yield {"type": "sources", "sources": []}
+        yield {"type": "token", "text": NO_ANSWER}
+        return
+    sources = [
+        {"source": c["source"], "page": c["page"], "score": round(c["score"], 3)}
+        for c in chunks
+    ]
+    yield {"type": "sources", "sources": sources}
+    prompt = build_prompt(question, format_context(chunks))
+    for piece in generate_stream(prompt, system=SYSTEM_PROMPT, temperature=0.2):
+        yield {"type": "token", "text": piece}

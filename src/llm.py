@@ -18,6 +18,24 @@ def generate(prompt: str, system: str = "", temperature: float = 0.2) -> str:
     return response["message"]["content"]
 
 
+def generate_stream(prompt: str, system: str = "", temperature: float = 0.2):
+    """Générateur : renvoie la réponse morceau par morceau."""
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    stream = ollama.chat(
+        model=settings.get("model"),
+        messages=messages,
+        options={"temperature": temperature},
+        stream=True,
+    )
+    for part in stream:
+        piece = part["message"]["content"]
+        if piece:
+            yield piece
+
+
 def installed_models() -> list:
     """Modèles installés dans Ollama (liste vide si Ollama est arrêté)."""
     try:

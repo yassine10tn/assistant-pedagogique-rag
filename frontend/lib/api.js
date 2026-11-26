@@ -83,3 +83,46 @@ export async function downloadFile(path, filename) {
   a.remove();
   URL.revokeObjectURL(url);
 }
+
+
+// Chat en streaming : le backend renvoie une ligne JSON par événement
+export async function streamChat(question, signal, onEvent) {
+  const session = await getSession();
+  let res;
+  try {
+    res = await fetch(`${API}/chat/stream`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(session?.accessToken ? { Authorization: `Bearer ${session.accessToken}` } : {}),
+      },
+      body: JSON.stringify({ question }),
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") throw e;
+    throw new Error("Serveur injoignable. Vérifiez que le backend est démarré.");
+  }
+  if (res.status === 401) {
+    await signOut({ callbackUrl: "/login?reason=expired" });
+    throw new Error("Session expirée, reconnectez-vous.");
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(typeof err.detail === "string" ? err.detail : `Erreur ${res.status}`);
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (line) onEvent(JSON.parse(line));
+    }
+  }
+}

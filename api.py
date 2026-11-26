@@ -565,3 +565,49 @@ def admin_export(kind: str, run_id: Optional[int] = None, admin: dict = Depends(
         return _csv_response(f"evaluation_{run['id']}_{run.get('model', '')}.csv",
                              ["type", "question", "score_max", "refusee", "correct", "temps_ms"], rows)
     raise HTTPException(status_code=404, detail="Export inconnu.")
+
+
+
+# ---------- Chat en streaming ----------
+import json as _sj
+import time as _st
+from fastapi.responses import StreamingResponse as _StreamingResponse
+from src.rag import answer_stream as _answer_stream, NO_ANSWER as _NO_ANSWER
+from src.chatlog import log_chat as _log_chat
+
+
+@app.post("/chat/stream")
+def chat_stream(req: ChatRequest, user: dict = Depends(current_user)):
+    question = req.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="La question est vide.")
+    hit(f"chat:{user['id']}", 30, 60)
+
+    def events():
+        t0, parts, srcs = _st.time(), [], []
+        try:
+            for ev in _answer_stream(question):
+                if ev["type"] == "sources":
+                    srcs = ev["sources"]
+                else:
+                    parts.append(ev["text"])
+                yield _sj.dumps(ev, ensure_ascii=False) + "\n"
+        except FileNotFoundError:
+            yield _sj.dumps({"type": "error", "message": "Aucun document indexé. Ajoutez un PDF dans « Documents »."}) + "\n"
+            return
+        except ConnectionError:
+            yield _sj.dumps({"type": "error", "message": "Ollama n'est pas démarré. Lancez l'application Ollama puis réessayez."}) + "\n"
+            return
+        except Exception as e:
+            yield _sj.dumps({"type": "error", "message": f"Erreur du modèle : {e}"}) + "\n"
+            return
+        text = "".join(parts)
+        ms = int((_st.time() - t0) * 1000)
+        cid = None
+        try:
+            cid = _log_chat(user["email"], question, text, srcs, _NO_ANSWER in text, ms)
+        except Exception:
+            pass
+        yield _sj.dumps({"type": "done", "id": cid, "refused": _NO_ANSWER in text, "ms": ms}) + "\n"
+
+    return _StreamingResponse(events(), media_type="application/x-ndjson")
