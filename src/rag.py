@@ -30,7 +30,7 @@ def answer(question: str) -> dict:
 
     Retourne {"answer": str, "sources": list[dict]}.
     """
-    chunks = retrieve(question, k=4)
+    chunks = retrieve(question)
 
     # Aucun passage assez proche : pas besoin d'appeler le LLM
     if not chunks:

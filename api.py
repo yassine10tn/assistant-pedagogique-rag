@@ -474,3 +474,34 @@ def eval_get_run(run_id: int, admin: dict = Depends(require_admin)):
     if not run:
         raise HTTPException(status_code=404, detail="Évaluation introuvable.")
     return {"run": run}
+
+
+# ---------- Admin : parametres ----------
+import json as _json
+from typing import Optional
+from pydantic import Field
+
+from src import settings
+from src.llm import installed_models
+
+
+class SettingsUpdate(BaseModel):
+    model: Optional[str] = None
+    min_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    top_k: Optional[int] = Field(default=None, ge=1, le=10)
+
+
+@app.get("/admin/settings")
+def admin_get_settings(admin: dict = Depends(require_admin)):
+    return {"settings": settings.get_all(), "models": installed_models()}
+
+
+@app.put("/admin/settings")
+def admin_put_settings(req: SettingsUpdate, admin: dict = Depends(require_admin)):
+    if req.model is not None:
+        models = installed_models()
+        if models and req.model not in models:
+            raise HTTPException(status_code=400, detail="Modele non installe dans Ollama (ollama pull ...).")
+    new = settings.update(req.model_dump(exclude_none=True))
+    log_event(admin["email"], "admin_update_settings", _json.dumps(new))
+    return {"settings": new}

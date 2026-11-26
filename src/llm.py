@@ -1,23 +1,36 @@
-"""LLM : communication avec Ollama."""
+"""LLM : communication avec Ollama (le modèle est réglable depuis l'admin)."""
 
 import ollama
 
-MODEL_NAME = "llama3.1:8b"
+from src import settings
 
 
 def generate(prompt: str, system: str = "", temperature: float = 0.2) -> str:
-    """Envoie un prompt au LLM et retourne la réponse (texte)."""
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
-
     response = ollama.chat(
-        model=MODEL_NAME,
+        model=settings.get("model"),
         messages=messages,
         options={"temperature": temperature},
     )
     return response["message"]["content"]
+
+
+def installed_models() -> list:
+    """Modèles installés dans Ollama (liste vide si Ollama est arrêté)."""
+    try:
+        res = ollama.list()
+    except Exception:
+        return []
+    items = res["models"] if isinstance(res, dict) else getattr(res, "models", [])
+    names = []
+    for m in items:
+        name = (m.get("model") or m.get("name")) if isinstance(m, dict) else (getattr(m, "model", None) or getattr(m, "name", None))
+        if name:
+            names.append(name)
+    return sorted(set(names))
 
 
 if __name__ == "__main__":

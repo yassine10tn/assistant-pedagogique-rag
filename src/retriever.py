@@ -51,8 +51,13 @@ def search(question: str, k: int = 3) -> list[dict]:
     return results
 
 
-def retrieve(question: str, k: int = 4, min_score: float = MIN_SCORE) -> list[dict]:
-    """Retourne les chunks pertinents. Liste vide si rien n'est assez proche."""
+def retrieve(question: str, k=None, min_score=None) -> list[dict]:
+    """Chunks pertinents. Seuil et top_k viennent des parametres admin sauf si precises."""
+    from src import settings
+
+    cfg = settings.get_all()
+    k = k or cfg["top_k"]
+    min_score = cfg["min_score"] if min_score is None else min_score
     results = search(question, k=k)
     return [r for r in results if r["score"] >= min_score]
 

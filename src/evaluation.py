@@ -8,7 +8,8 @@ from contextlib import closing
 from datetime import datetime, timezone
 
 from src.rag import NO_ANSWER, answer
-from src.retriever import MIN_SCORE, search
+from src import settings
+from src.retriever import search
 from src.users import DB_PATH
 
 DEFAULT_IN = [
@@ -101,6 +102,7 @@ def compute(results: list) -> dict:
 
 def _run(in_q: list, out_q: list, full: bool) -> None:
     try:
+        MIN_SCORE = settings.get("min_score")
         results = []
         for kind, q in [("in", x) for x in in_q] + [("out", x) for x in out_q]:
             t0 = time.time()
