@@ -2,7 +2,7 @@
 
 Application web d'aide à l'apprentissage : **chatbot avec citations des sources**, **résumés** et **QCM**, construits sur un pipeline **RAG** et un **LLM local** (Ollama).
 
-> Projet NLP - Master DSSD - Encadrant : Dr Riadh BOUSLIMI
+
 > Auteur : **Yassine Amri**
 
 ## 1. Fonctionnalités
