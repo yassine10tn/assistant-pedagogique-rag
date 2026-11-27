@@ -44,6 +44,7 @@ class ChatRequest(BaseModel):
 
 
 class SummaryRequest(BaseModel):
+    model: Optional[str] = None
     filename: str
     level: Literal["court", "moyen", "detaille"] = "moyen"
 
@@ -241,11 +242,29 @@ def feedback(cid: int, req: FeedbackRequest, user: dict = Depends(current_user))
 
 @app.post("/summary")
 def summary(req: SummaryRequest, user: dict = Depends(current_user)):
+    import time as _t
+    from src import llm as _llm
+    from src import settings as _settings
+
+    model = req.model or _settings.get("model")
+    installed = _llm.installed_models()
+    if installed and model not in installed:
+        raise HTTPException(status_code=400, detail="Modèle non installé dans Ollama.")
+    _llm.MODEL_OVERRIDE.set(model)
+    t0 = _t.time()
     try:
         text = summarize_pdf(req.filename, req.level)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="PDF introuvable.")
-    return {"filename": req.filename, "level": req.level, "summary": text}
+    return {"filename": req.filename, "level": req.level, "summary": text,
+            "model": model, "seconds": round(_t.time() - t0, 1)}
+
+
+@app.get("/models")
+def list_models(user: dict = Depends(current_user)):
+    from src import llm as _llm
+    from src import settings as _settings
+    return {"models": _llm.installed_models(), "default": _settings.get("model")}
 
 
 @app.post("/quiz")

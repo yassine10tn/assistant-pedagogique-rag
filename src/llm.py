@@ -1,8 +1,17 @@
 """LLM : communication avec Ollama (le modèle est réglable depuis l'admin)."""
 
+import contextvars
+
 import ollama
 
 from src import settings
+
+# Modèle forcé pour la requête en cours (None = modèle des paramètres admin)
+MODEL_OVERRIDE = contextvars.ContextVar("model_override", default=None)
+
+
+def current_model() -> str:
+    return MODEL_OVERRIDE.get() or settings.get("model")
 
 
 def generate(prompt: str, system: str = "", temperature: float = 0.2) -> str:
@@ -11,7 +20,7 @@ def generate(prompt: str, system: str = "", temperature: float = 0.2) -> str:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
     response = ollama.chat(
-        model=settings.get("model"),
+        model=current_model(),
         messages=messages,
         options={"temperature": temperature},
     )
@@ -25,7 +34,7 @@ def generate_stream(prompt: str, system: str = "", temperature: float = 0.2):
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
     stream = ollama.chat(
-        model=settings.get("model"),
+        model=current_model(),
         messages=messages,
         options={"temperature": temperature},
         stream=True,
