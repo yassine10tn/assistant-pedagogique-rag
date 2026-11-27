@@ -7,9 +7,21 @@ Application web d'aide à l'apprentissage : **chatbot avec citations des sources
 
 ## 1. Fonctionnalités
 
-**Utilisateur** : chat RAG avec citations `[Source n]` et pages, réponse « je ne sais pas » hors périmètre, avis 👍/👎, streaming mot à mot avec rendu Markdown et bouton Stop, résumés (court / moyen / détaillé), quiz QCM (3 niveaux), upload de PDF, inscription/connexion (email ou Google), profil, thème sombre/clair.
+**Utilisateur**
+- **Chat RAG** : réponses issues uniquement des documents, avec citations `[Source n]` (fichier et page), streaming mot à mot, rendu Markdown, bouton Stop, copie, avis 👍/👎. Réponse « Je ne trouve pas la réponse » hors périmètre.
+- **Résumés** : court, moyen, détaillé (map-reduce) ; **choix du modèle** (Llama ou Qwen), temps de génération affiché, copie et export `.md`.
+- **Quiz QCM** : sujet libre, **nombre de questions libre (1 à 20)**, 3 niveaux de difficulté, **choix du modèle**, parcours question par question avec correction immédiate, explications, score animé et récapitulatif ; raccourcis clavier (1-4 / A-D, Entrée).
+- **Documents** : téléversement de PDF (glisser-déposer) et indexation automatique.
+- **Compte** : inscription/connexion par email ou Google, profil, changement de mot de passe, suppression du compte, thème sombre/clair.
+- **Interface** : page d'accueil, chat et pages Résumés/Quiz repensés (icônes SVG, animations, responsive).
 
-**Administrateur** (`/admin`) : tableau de bord (KPIs, graphiques), CRUD utilisateurs (rôles, activation, suppression), gestion des documents, historique des conversations, **évaluation automatique du RAG**, **paramètres** (modèle LLM, seuil, top_k), journal d'audit, **exports CSV**.
+**Administrateur (`/admin`)**
+- Tableau de bord (KPIs, graphiques, satisfaction 👍/👎, temps de réponse).
+- CRUD utilisateurs (créer, modifier, changer le rôle, activer/désactiver, supprimer).
+- Gestion des documents et réindexation, historique des conversations.
+- **Évaluation automatique du RAG** : questions dans/hors du cours, métriques, tableau de choix du seuil ; **le modèle utilisé est enregistré pour chaque évaluation**.
+- **Paramètres** : modèle LLM, seuil `MIN_SCORE`, `top_k`, modifiables sans toucher au code.
+- Journal d'audit et **exports CSV** (utilisateurs, historique, audit, évaluations).
 
 ## 2. Architecture
 
@@ -102,15 +114,21 @@ Application : http://localhost:3000 - API : http://localhost:8000/docs
 |---|---|---|---|
 | 0,78 | 100 % | 20 % | 60 % |
 | 0,82 | 100 % | 90 % | **95 %** |
+| 0,84 | 90 % | 100 % | 95 % |
 
-**Évaluation complète (retrieval + LLM + prompt strict), seuil 0,78**
+**Pipeline complet (retrieval + LLM + prompt strict), seuil 0,78**
 
-| Modèle | Précision | Dans le cours | Refus hors cours | Citations | Temps moyen |
+| Modèle | Précision (plusieurs essais) | Exemple d'essai : dans le cours | Refus hors cours | Citations | Temps moyen |
 |---|---|---|---|---|---|
-| llama3.1:8b | **100 %** | X % | X % | X % | X s |
-| qwen2.5:7b | **95 %** | X % | X % | X % | X s |
+| llama3.1:8b | 90 % / 95 % / 100 % | 100 % | 90 % | 100 % | 2,7 s |
+| qwen2.5:7b | 95 % / 95 % / 95 % | 90 % | 100 % | 100 % | 1,7 s |
 
-**Analyse** : le score de similarité seul ne sépare pas questions du cours et hors cours (écart nul : 0,833 contre 0,833). Le prompt strict du LLM compense. Échantillon de 20 questions : tendance, pas preuve générale.
+**Analyse**
+- Le score de similarité seul ne sépare pas les questions du cours de celles hors cours : l'écart (min dans le cours - max hors cours) est nul (0,833 contre 0,833). Au seuil 0,78, le retrieval seul ne bloque que 20 % des questions hors sujet.
+- Le prompt strict du LLM compense : la précision passe de 60 % à 90-100 %.
+- Les deux modèles se valent à ±5 points près. Les résultats varient d'un essai à l'autre (génération non déterministe, température 0,2) : Llama a obtenu 90 %, 100 % puis 95 %. Qwen s'est montré plus stable et plus rapide ; Llama refuse parfois à tort une question du cours, Qwen laisse parfois passer une question hors sujet.
+- Un seuil de 0,82 donne 95 % en retrieval seul mais reste fragile (0,817 hors cours contre 0,833 dans le cours).
+- Limite : échantillon de 20 questions ; ces chiffres indiquent une tendance, pas une preuve générale. Le temps de la toute première requête inclut le chargement du modèle en mémoire.
 
 ## 9. Sécurité
 
