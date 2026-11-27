@@ -50,6 +50,7 @@ class SummaryRequest(BaseModel):
 
 
 class QuizRequest(BaseModel):
+    model: Optional[str] = None
     topic: str
     n: int = 3
     difficulty: Literal["facile", "moyen", "difficile"] = "moyen"
@@ -269,18 +270,26 @@ def list_models(user: dict = Depends(current_user)):
 
 @app.post("/quiz")
 def quiz(req: QuizRequest, user: dict = Depends(current_user)):
-    if not 1 <= req.n <= 10:
-        raise HTTPException(status_code=400, detail="n doit être entre 1 et 10.")
+    import time as _t
+    from src import llm as _llm
+    from src import settings as _settings
+
+    if not 1 <= req.n <= 20:
+        raise HTTPException(status_code=400, detail="n doit être entre 1 et 20.")
+    model = req.model or _settings.get("model")
+    installed = _llm.installed_models()
+    if installed and model not in installed:
+        raise HTTPException(status_code=400, detail="Modèle non installé dans Ollama.")
+    _llm.MODEL_OVERRIDE.set(model)
+    t0 = _t.time()
     try:
         questions = generate_quiz(req.topic, n=req.n, difficulty=req.difficulty)
     except FileNotFoundError:
         raise HTTPException(status_code=409, detail="Aucun document indexé.")
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e))
-    return {"topic": req.topic, "questions": questions}
-
-
-# ---------- Admin : général ----------
+    return {"topic": req.topic, "questions": questions, "model": model,
+            "seconds": round(_t.time() - t0, 1)}
 
 @app.get("/admin/ping")
 def admin_ping(admin: dict = Depends(require_admin)):
